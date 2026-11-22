@@ -4,6 +4,12 @@ ESP32 + MQ-3 alcohol detection system with an I2C LCD, LEDs, buzzer and a
 fail-safe relay. Built for the IAMC evaluation; simulation-verified in
 Wokwi. **Not yet tested on real hardware.**
 
+
+![Demo video](https://github.com/user-attachments/assets/b64c7515-185b-489f-a044-7a369ffbc8ef)
+Demo video (108 s) — press play to watch the system run through SAFE, WARNING, DANGER and FAULT.
+
+
+
 - **Live simulation:** https://wokwi.com/projects/481328204846969857
 - **Full report (points 1–5):** [`docs/IAMC-PS7-Alcohol-Detection-System.pdf`](docs/IAMC-PS7-Alcohol-Detection-System.pdf)
 - **Demo video (90 s):** [`video/IAMC-PS7-Alcohol-Detection-Demo.mp4`](video/IAMC-PS7-Alcohol-Detection-Demo.mp4)
