@@ -1,0 +1,574 @@
+<!DOCTYPE html>
+<html><head><meta charset="utf-8">
+<style>
+@page { size: A4; margin: 18mm 16mm 18mm 16mm; }
+body { font-family: "Liberation Serif", serif; font-size: 11pt; line-height: 1.45; color: #111; }
+h1 { font-size: 20pt; text-align: center; margin: 6pt 0 2pt 0; }
+h2 { font-size: 14pt; border-bottom: 1.5pt solid #333; padding-bottom: 3pt; margin-top: 22pt; page-break-after: avoid; }
+h3 { font-size: 12pt; margin-top: 14pt; page-break-after: avoid; }
+.sub { text-align: center; font-size: 11pt; color: #444; margin: 2pt 0; }
+.coverbox { padding: 6pt 0 0 0; text-align: center; }
+.fig { margin: 8pt 0; text-align: center; }
+table { border-collapse: collapse; width: 100%; margin: 8pt 0; font-size: 10pt; }
+th, td { border: 0.7pt solid #666; padding: 4pt 6pt; text-align: left; vertical-align: top; }
+th { background: #e8e8e8; }
+pre { font-family: "Liberation Mono", monospace; font-size: 7.5pt; line-height: 1.25; background: #f4f4f4; padding: 8pt; border: 0.5pt solid #999; white-space: pre-wrap; word-wrap: break-word; page-break-inside: auto; }
+img.shot { width: 58%; border: 0.7pt solid #666; margin: 6pt 0 2pt 0; }
+.figcap { font-size: 9.5pt; color: #333; margin: 0 0 10pt 0; }
+.note { background: #fff8e1; border-left: 3pt solid #d4a017; padding: 6pt 9pt; margin: 8pt 0; font-size: 10.5pt; }
+.warn { background: #fdecea; border-left: 3pt solid #b3261e; padding: 6pt 9pt; margin: 8pt 0; font-size: 10.5pt; }
+ul, ol { margin: 4pt 0 4pt 16pt; }
+li { margin-bottom: 2pt; }
+.toc td { border: none; padding: 2pt 4pt; }
+.small { font-size: 9.5pt; color: #444; }
+</style></head><body>
+
+<div class="coverbox">
+<h1>Alcohol Detection System</h1>
+<p class="sub">IAMC Problem Statement 7 &mdash; Microcontroller-Based Prototype</p>
+<p class="sub">ESP32 + MQ-3 + I2C LCD + LEDs + Buzzer + Relay Interlock</p>
+<p class="sub" style="margin-top:14pt;">Single submission PDF &mdash; Points 1&ndash;5</p>
+<p class="sub">Shreyansh Saini, B.Tech ECE, JECRC University, Jaipur</p>
+<p class="sub">22 November 2026</p>
+<p class="sub" style="margin-top:10pt;">Simulation: <b>https://wokwi.com/projects/481328204846969857</b></p>
+<p class="sub">Repository files: sketch.ino, config.h, sensor.h, diagram.json, libraries.txt</p>
+</div>
+
+<h2>Contents</h2>
+<table class="toc">
+<tr><td>1. Problem Statement / Aim</td></tr>
+<tr><td>2. Scope of the Solution</td></tr>
+<tr><td>3. Required Components (Hardware, Software, IDE)</td></tr>
+<tr><td>4. Simulation &mdash; Circuit, Code and Output (Wokwi.com)</td></tr>
+<tr><td>5. Code for the Solution</td></tr>
+<tr><td>Appendix A. Verification Summary and Limitations</td></tr>
+</table>
+
+<h2>1. Problem Statement / Aim</h2>
+<p><b>Problem Statement 7: Alcohol Detection System.</b> Develop a microcontroller-based prototype which can detect the drink-and-drive issue of a driver by detecting the consumption of alcohol by the driver.</p>
+<p><b>Aim.</b> Build a low-cost, fail-safe breath-alcohol screening prototype that, before a vehicle can be started, samples the driver's breath, classifies it as SAFE, WARNING or DANGER, and only releases an ignition interlock (relay) when the result is SAFE. The system must show the result on an LCD, signal it with LEDs and a buzzer, log every reading over Serial for later analysis, and refuse to start the vehicle on any <i>detected</i> sensor fault (voltage-limit faults only).</p>
+<p>The output is an <b>indicative alcohol index AI = R0 / Rs</b> (clean-air sensor resistance divided by the current sensor resistance). It is <b>not</b> a legal blood-alcohol (BAC) reading and must never be presented as one.</p>
+
+<h2>2. Scope of the Solution</h2>
+<h3>2.1 What the system does</h3>
+<ul>
+<li><b>Warm-up and self-calibration:</b> on power-up the sensor warms up (10 s in simulation, 60 s on hardware), then calibrates in clean air for 10 s. Calibration is accepted only if the clean-air samples are stable (standard deviation / mean &le; 5 %), above 50 mV, and below 60 % of the sensor supply. After 3 failed attempts the system enters a latching FAULT (code E2).</li>
+<li><b>Breath test:</b> a short button press starts a 5 s sampling window at 10 Hz. The peak alcohol index over the window decides the result.</li>
+<li><b>Three result levels:</b> SAFE (AI &lt; 2.0) &mdash; green LED, one short beep, relay released and engine enabled for 60 s; WARNING (2.0 &le; AI &lt; 4.0) &mdash; red LED blinking, short beeps, relay stays locked, 30 s cooldown; DANGER (AI &ge; 4.0) &mdash; red LED steady, continuous buzzer, relay stays locked, 60 s cooldown.</li>
+<li><b>Fail-safe interlock:</b> the relay is default-LOCKED from the first line of <i>setup()</i> and is released only in the SAFE result state, through a single <i>changeState()</i> gate. Any fault, warning, danger, warm-up, calibration or power loss leaves the vehicle locked.</li>
+<li><b>Fault detection:</b> a sensor pin stuck below 10 mV or above 3150 mV for 1 s (outside warm-up) latches FAULT, code E1, with fast red blinking and a repeating 3-beep pattern. The fault is latching and does not clear by itself.</li>
+<li><b>Recalibration:</b> holding the button for 3 s in READY restarts calibration.</li>
+<li><b>Logging:</b> every sample is logged over Serial at 115200 baud as <i>ms,raw_mV,rs_ohm,ai,state</i>, with state-change lines prefixed <i>#</i>. Trials are recorded in <i>data/test_log.csv</i> and scored with <i>analyze_log.py</i>.</li>
+</ul>
+<h3>2.2 What the system does not do (limits of scope)</h3>
+<ul>
+<li>It does <b>not</b> measure blood-alcohol concentration and cannot be used as legal evidence of intoxication.</li>
+<li>The MQ-3 reacts to other vapours (hand sanitiser, petrol fumes, cigarette smoke) and drifts with temperature and humidity; it is a screening sensor, not a specific ethanol analyser.</li>
+<li>It does not identify who blew into the sensor, and it does not prevent a sober passenger from blowing instead of the driver.</li>
+<li>It does not replace a certified breathalyser, a vehicle immobiliser standard, or any legal drink-drive enforcement process.</li>
+<li>Thresholds AI_WARNING 2.0 and AI_DANGER 4.0 are <b>starting values</b>. They were verified to produce the three bands in simulation (see §4.3), but they are <b>not calibrated to real alcohol concentrations</b> &mdash; the trial log is empty (see Appendix A).</li>
+<li>Verification so far is simulation plus host unit tests only. The prototype has <b>not</b> been run on real ESP32 hardware.</li>
+</ul>
+
+<h2>3. Required Components</h2>
+<h3>3.1 Hardware</h3>
+<table>
+<tr><th>Component</th><th>Specification / value</th><th>Role</th></tr>
+<tr><td>Microcontroller</td><td>ESP32 DevKit V1 (ESP32 DevKit-C V4 in Wokwi)</td><td>Runs the state machine, ADC, LCD, interlock</td></tr>
+<tr><td>Alcohol sensor</td><td>MQ-3 module (AO analogue output); slide potentiometer in Wokwi</td><td>Detects alcohol vapour; resistance falls as alcohol rises</td></tr>
+<tr><td>Divider (hardware only)</td><td>R1 10 k&Omega; (top), R2 15 k&Omega; (bottom) &mdash; MQ-3 AO to GPIO34</td><td>Scales the 5 V sensor output into the ESP32 ADC range</td></tr>
+<tr><td>Display</td><td>1602 LCD with I2C backpack, address 0x27, SDA GPIO21 / SCL GPIO22</td><td>Status, countdown, result and fault codes</td></tr>
+<tr><td>Indicators</td><td>Green LED GPIO26, red LED GPIO27, each with 220 &Omega; series resistor</td><td>SAFE / WARNING / DANGER / FAULT signalling</td></tr>
+<tr><td>Buzzer</td><td>Active buzzer, GPIO25</td><td>Short beep (SAFE), intermittent (WARNING), continuous (DANGER), 3-beep repeat (FAULT)</td></tr>
+<tr><td>Relay module</td><td>Single-channel relay, IN on GPIO33 (active-high; set RELAY_ACTIVE_HIGH 0 for active-low modules)</td><td>Ignition interlock &mdash; default locked, released only on SAFE</td></tr>
+<tr><td>Push button</td><td>Momentary, GPIO32 to GND (INPUT_PULLUP)</td><td>Short press = start test; 3 s hold = recalibrate</td></tr>
+<tr><td>Engine indicator</td><td>Blue LED with 220 &Omega;, switched by the relay NO contact</td><td>Shows the interlock state in the simulation</td></tr>
+<tr><td>Power</td><td>5 V supply (USB / VIN); MQ-3 on 5 V, ESP32 on 3.3 V logic</td><td>Sensor heater and logic supply</td></tr>
+<tr><td>Decoupling / protection</td><td>100 nF across each module supply; 10 &micro;F at the 5 V entry</td><td>Supply stability</td></tr>
+<tr><td>PCB (point 7)</td><td>About 80 &times; 60 mm, 2 layers, 4 &times; M3 holes; 0.25 mm signal tracks, &ge; 0.5 mm for 5 V and GND, 0.2 mm clearance</td><td>See <i>hardware/PCB_GUIDE.md</i> and <i>gerber/gerber.zip</i></td></tr>
+</table>
+<h3>3.2 Software and IDE</h3>
+<table>
+<tr><th>Item</th><th>Name / version</th><th>Purpose</th></tr>
+<tr><td>IDE</td><td>Arduino IDE (sketch.ino, .h files); Wokwi.com for simulation</td><td>Firmware development and simulation</td></tr>
+<tr><td>Language</td><td>Arduino C++ (ESP32 Arduino core v3)</td><td>State machine, ADC, I2C, watchdog</td></tr>
+<tr><td>Library</td><td>LiquidCrystal I2C (added in Wokwi Library Manager; see libraries.txt)</td><td>1602 LCD over I2C</td></tr>
+<tr><td>Built-in</td><td>Wire.h, Preferences.h, esp_task_wdt.h</td><td>I2C, storing R0 in flash, watchdog (5 s)</td></tr>
+<tr><td>Simulation</td><td>Wokwi.com, ESP32 starter project</td><td>Circuit, code and Serial output (point 4)</td></tr>
+<tr><td>Host tests</td><td>g++ (C++17) against mock Arduino headers in tests/</td><td>Logic tests without hardware</td></tr>
+<tr><td>Analysis</td><td>Python 3, analyze_log.py + data/test_log.csv</td><td>Trial scoring (accuracy, false alarms, repeatability)</td></tr>
+<tr><td>PCB layout</td><td>KiCad 8 (per hardware/PCB_GUIDE.md)</td><td>Schematic, layout, Gerber export (point 7)</td></tr>
+</table>
+<h3>3.3 Pin map (from config.h)</h3>
+<table>
+<tr><th>Signal</th><th>ESP32 pin</th><th>Notes</th></tr>
+<tr><td>MQ-3 AO / potentiometer</td><td>GPIO34 (ADC1_CH6, input only)</td><td>11 dB attenuation; 16-sample average</td></tr>
+<tr><td>Button</td><td>GPIO32</td><td>INPUT_PULLUP; short press test, 3 s hold recalibrate</td></tr>
+<tr><td>Green LED</td><td>GPIO26</td><td>Via 220 &Omega; to GND</td></tr>
+<tr><td>Red LED</td><td>GPIO27</td><td>Via 220 &Omega; to GND</td></tr>
+<tr><td>Buzzer</td><td>GPIO25</td><td>Driven high for the active pattern</td></tr>
+<tr><td>Relay IN</td><td>GPIO33</td><td>Active-high (configurable)</td></tr>
+<tr><td>LCD SDA / SCL</td><td>GPIO21 / GPIO22</td><td>I2C address 0x27</td></tr>
+</table>
+
+<h2>4. Simulation &mdash; Circuit, Code and Output (Wokwi.com)</h2>
+<p>Project: <b>https://wokwi.com/projects/481328204846969857</b> ("IAMC PS-7 Alcohol Detection System"), saved anonymously, no sign-in required. Files: sketch.ino, config.h, sensor.h, diagram.json, libraries.txt, with the LiquidCrystal I2C library added. The simulation was run from a fresh load on 22 November 2026 and every state below was reached with the code exactly as submitted &mdash; no code or threshold was changed during verification.</p>
+<h3>4.1 Simulated circuit</h3>
+<p>The diagram below is the Wokwi circuit as simulated: ESP32 DevKit, slide potentiometer standing in for the MQ-3, I2C LCD, green and red LEDs with 220 &Omega; resistors, buzzer, push button, relay module and the blue Engine LED on the relay NO contact.</p>
+<div class="fig">
+<img class="shot" src="screenshots/01-ready-circuit.jpg">
+<p class="figcap">Figure 1 &mdash; Wokwi simulated circuit (READY state). LCD "Ready / Press to test", green LED lit, relay locked.</p>
+</div>
+<h3>4.2 Code (as run)</h3>
+<div class="fig">
+<img class="shot" src="screenshots/02-safe.jpg">
+<p class="figcap">Figure 2 &mdash; Wokwi editor and simulation in one view: sketch.ino on the left (state machine and fail-safe relay gate), the circuit and Serial Monitor on the right. The full code listing is in §5.</p>
+</div>
+<h3>4.3 Measured results (all five states)</h3>
+<table>
+<tr><th>State</th><th>Slider (0&ndash;1023)</th><th>raw_mV</th><th>Peak AI</th><th>LCD shows</th><th>LEDs / relay</th><th>Serial (exact)</th></tr>
+<tr><td>READY</td><td>10</td><td>176</td><td>1.00</td><td>Ready / Press to test</td><td>Green steady; relay locked</td><td># R0=178208; # state -&gt; READY; 30738,176,177500,1.00,READY</td></tr>
+<tr><td>SAFE</td><td>10</td><td>176</td><td>1.00</td><td>SAFE pk 1.0 / Engine ON</td><td>Green steady; blue Engine LED ON; relay released 60 s</td><td># result peakAI=1.00; # state -&gt; SAFE; 69088,176,177500,1.00,SAFE</td></tr>
+<tr><td>WARNING</td><td>65</td><td>361</td><td>2.19</td><td>WARNING pk 2.2 / Engine LOCKED</td><td>Red blinking; relay locked; 30 s cooldown</td><td># result peakAI=2.19; # state -&gt; WARNING; 148838,361,81413,2.19,WARNING</td></tr>
+<tr><td>DANGER</td><td>145</td><td>630</td><td>4.20</td><td>ALCOHOL FOUND / LOCKED pk 4.2</td><td>Red steady; buzzer continuous (code-driven); relay locked; 60 s cooldown</td><td># result peakAI=4.20; # state -&gt; DANGER; 259338,630,42381,4.20,DANGER</td></tr>
+<tr><td>FAULT E1</td><td>1023 (max)</td><td>3171</td><td>n/a</td><td>SENSOR ERROR / Code E1</td><td>Red fast blink; latching, no return to READY</td><td># state -&gt; FAULT; 324838,3171,407,438.06,FAULT</td></tr>
+</table>
+<p>Warm-up (10 s) and calibration (10 s) completed with no errors in every run; calibration measured <b>R0 = 178,208 &Omega;</b> (serial # R0=178208) and stored it in flash for comparison. The 177,500 &Omega; figure in the serial log is the clean-air sensor resistance Rs at 176 mV, not R0. With R0 = 178,208 &Omega; the reported peak AIs reproduce exactly: 176 mV &rarr; Rs 177,500 &Omega; &rarr; AI 1.00; 361 mV &rarr; Rs 81,413 &Omega; &rarr; AI 2.19; 630 mV &rarr; Rs 42,381 &Omega; &rarr; AI 4.20. (An earlier draft wrongly called 177,500 &Omega; the R0; corrected here.) After WARNING the system returned to READY after the 30 s cooldown, and after DANGER after the 60 s cooldown. No compile errors, wiring warnings or unexpected states appeared in any run. In FAULT the table records peak AI as n/a: the serial log prints a computed value of 438.06 there, but that is an arithmetic artefact (Rs &asymp; 407 &Omega; near the supply rail at 3171 mV), not a measurement &mdash; the LCD shows SENSOR ERROR only.</p>
+<div class="note"><b>Correction to the draft README demo table (found by measurement, 22 Nov 2026).</b> The README described the slider in percent (10 %, 22 %, 35&ndash;60 %) and expected raw_mV &asymp; 300 in clean air. Wokwi's slide potentiometer is actually a 0&ndash;1023 range whose voltage rises much more slowly than a 0&ndash;3300 mV linear model: slider 10 gives 176 mV (not ~300 mV); slider 22 gives AI &asymp; 1.25, still SAFE, not WARNING; slider 65 gives AI 2.19 (WARNING) and slider 145 gives AI 4.20 (DANGER). The values in the table above are the measured ones and replace the README percentages. The button also needs a 0.8&ndash;1 s press-and-hold in the simulation &mdash; quick clicks are sometimes missed. The README's "slider 0 triggers a fault" is wrong in Wokwi: slider 0 reads 142 mV, far above the 10 mV low-fault limit, so only the maximum end (1023, 3171 mV, above the 3150 mV limit) trips FAULT E1. None of this is a code failure; it is the potentiometer's behaviour, and the firmware behaved correctly at every measured point.</div>
+<h3>4.4 LCD and Serial output per result</h3>
+<div class="fig">
+<img class="shot" src="screenshots/03-warning-circuit.jpg">
+<p class="figcap">Figure 3 &mdash; WARNING: LCD "WARNING pk 2.2 / Engine LOCKED", red LED lit, Serial lines 148838,361,81413,2.19,WARNING.</p>
+</div>
+<div class="fig">
+<img class="shot" src="screenshots/04-danger-circuit.jpg">
+<p class="figcap">Figure 4 &mdash; DANGER: LCD "ALCOHOL FOUND / LOCKED pk 4.2", red LED steady, Serial "# result peakAI=4.20 / # state -&gt; DANGER" and 259338,630,42381,4.20,DANGER.</p>
+</div>
+<div class="fig">
+<img class="shot" src="screenshots/05-fault-circuit.jpg">
+<p class="figcap">Figure 5 &mdash; FAULT: LCD "SENSOR ERROR / Code E1", slider at maximum, Serial 324838,3171,407,438.06,FAULT (latching).</p>
+</div>
+
+<h2>5. Code for the Solution</h2>
+<p>The complete firmware as simulated: sketch.ino (312 lines), config.h (59 lines) and sensor.h (25 lines). Set <i>SIMULATION 1</i> for Wokwi (potentiometer on GPIO34, 3.3 V reference, 10 s warm-up) and <i>SIMULATION 0</i> for real hardware (MQ-3 on 5 V through the 10 k / 15 k divider, 60 s warm-up).</p>
+<h3>5.1 sketch.ino</h3>
+<pre>/*
+  Alcohol Detection System - IAMC Problem Statement 7
+  ESP32 + MQ-3 (or potentiometer in Wokwi) + I2C LCD + LEDs + buzzer + relay interlock.
+
+  Output is an INDICATIVE alcohol index (AI = R0/Rs), NOT a legal blood-alcohol reading.
+  Relay is default-LOCKED and is released only in RESULT_SAFE (fail-safe, ARD ADR-5).
+*/
+#include &lt;Wire.h&gt;
+#include &lt;LiquidCrystal_I2C.h&gt;
+#include &lt;Preferences.h&gt;
+#include &lt;esp_task_wdt.h&gt;
+#include "config.h"
+#include "sensor.h"
+
+enum State { ST_WARMUP, ST_CALIBRATING, ST_READY, ST_SAMPLING,
+             ST_RESULT_SAFE, ST_RESULT_WARNING, ST_RESULT_DANGER, ST_FAULT };
+enum Level { LV_SAFE = 0, LV_WARNING = 1, LV_DANGER = 2 };
+
+LiquidCrystal_I2C lcd(LCD_ADDR, 16, 2);
+Preferences prefs;
+
+State    state = ST_WARMUP;
+uint32_t stateSince = 0;
+float    r0 = 0.0f;                 // clean-air baseline resistance
+float    lastAI = 0.0f, peakAI = 0.0f;
+Level    liveLevel = LV_SAFE, heldLevel = LV_SAFE;
+uint32_t lastTick = 0, lastLcd = 0, lastLog = 0;
+int      faultCode = 0;
+
+// calibration accumulators
+double   calSum = 0, calSumSq = 0;
+uint32_t calN = 0;
+int      calTries = 0;
+
+// fault debounce
+bool     badActive = false;
+uint32_t badSince = 0;
+
+// button
+bool     btnPrev = false;
+uint32_t btnDownAt = 0;
+uint32_t btnLastChange = 0;
+
+const char* stateName(State s) {
+  switch (s) {
+    case ST_WARMUP:         return "WARMUP";
+    case ST_CALIBRATING:    return "CALIBRATING";
+    case ST_READY:          return "READY";
+    case ST_SAMPLING:       return "SAMPLING";
+    case ST_RESULT_SAFE:    return "SAFE";
+    case ST_RESULT_WARNING: return "WARNING";
+    case ST_RESULT_DANGER:  return "DANGER";
+    default:                return "FAULT";
+  }
+}
+
+// ---------- outputs ----------
+void setRelay(bool unlocked) {
+  bool level = RELAY_ACTIVE_HIGH ? unlocked : !unlocked;
+  digitalWrite(PIN_RELAY, level ? HIGH : LOW);
+}
+
+void changeState(State s, uint32_t now) {
+  state = s;
+  stateSince = now;
+  setRelay(s == ST_RESULT_SAFE);          // single place that can unlock the vehicle
+  Serial.print("# state -&gt; ");
+  Serial.println(stateName(s));
+}
+
+void enterFault(int code, uint32_t now) {
+  faultCode = code;
+  changeState(ST_FAULT, now);
+}
+
+void startCalibration(uint32_t now) {
+  calSum = 0; calSumSq = 0; calN = 0;
+  changeState(ST_CALIBRATING, now);
+}
+
+void lcdPrint(uint8_t row, const char* text) {
+  char buf[17];
+  snprintf(buf, sizeof(buf), "%-16s", text);   // pad to 16 chars, avoids lcd.clear() flicker
+  lcd.setCursor(0, row);
+  lcd.print(buf);
+}
+
+void drawLcd(uint32_t now) {
+  char l1[24], l2[24];
+  switch (state) {
+    case ST_WARMUP: {
+      uint32_t left = (WARMUP_MS - (now - stateSince)) / 1000UL + 1;
+      snprintf(l1, sizeof l1, "Warming up...");
+      snprintf(l2, sizeof l2, "%lu s left", (unsigned long)left);
+      break; }
+    case ST_CALIBRATING:
+      snprintf(l1, sizeof l1, "Calibrating");
+      snprintf(l2, sizeof l2, "Keep air clean");
+      break;
+    case ST_READY:
+      snprintf(l1, sizeof l1, "Ready");
+      snprintf(l2, sizeof l2, "Press to test");
+      break;
+    case ST_SAMPLING:
+      snprintf(l1, sizeof l1, "BLOW NOW");
+      snprintf(l2, sizeof l2, "AI: %.1f", lastAI);
+      break;
+    case ST_RESULT_SAFE:
+      snprintf(l1, sizeof l1, "SAFE   pk %.1f", peakAI);
+      snprintf(l2, sizeof l2, "Engine ON");
+      break;
+    case ST_RESULT_WARNING:
+      snprintf(l1, sizeof l1, "WARNING pk %.1f", peakAI);
+      snprintf(l2, sizeof l2, "Engine LOCKED");
+      break;
+    case ST_RESULT_DANGER:
+      snprintf(l1, sizeof l1, "ALCOHOL FOUND");
+      snprintf(l2, sizeof l2, "LOCKED pk %.1f", peakAI);
+      break;
+    default:
+      snprintf(l1, sizeof l1, "SENSOR ERROR");
+      snprintf(l2, sizeof l2, "Code E%d", faultCode);
+      break;
+  }
+  lcdPrint(0, l1);
+  lcdPrint(1, l2);
+}
+
+void updateIndicators(uint32_t now) {
+  bool green = false, red = false, buzz = false;
+  uint32_t t = now - stateSince;
+  switch (state) {
+    case ST_WARMUP:         green = (now / 500) % 2; break;               // slow blink
+    case ST_CALIBRATING:
+    case ST_SAMPLING:       green = (now / 125) % 2; break;               // fast blink
+    case ST_READY:          green = true; break;
+    case ST_RESULT_SAFE:    green = true; buzz = (t &lt; 150); break;        // one short beep
+    case ST_RESULT_WARNING: red = (now / 500) % 2; buzz = (t % 2000) &lt; 100; break;
+    case ST_RESULT_DANGER:  red = true; buzz = true; break;               // continuous
+    case ST_FAULT: {
+      red = (now / 100) % 2;
+      uint32_t p = now % 2000;                                            // 3 beeps, repeating
+      buzz = (p &lt; 100) || (p &gt;= 200 &amp;&amp; p &lt; 300) || (p &gt;= 400 &amp;&amp; p &lt; 500);
+      break; }
+  }
+  digitalWrite(PIN_LED_GREEN, green);
+  digitalWrite(PIN_LED_RED, red);
+  digitalWrite(PIN_BUZZER, buzz);
+}
+
+// ---------- decision logic ----------
+Level classify(float ai, Level prev) {
+  Level l = LV_SAFE;
+  if (ai &gt;= AI_DANGER) l = LV_DANGER;
+  else if (ai &gt;= AI_WARNING) l = LV_WARNING;
+  // hysteresis: do not drop a level until AI falls below 80 % of that level's threshold
+  if (prev == LV_DANGER &amp;&amp; ai &gt;= AI_DANGER * HYSTERESIS &amp;&amp; l &lt; LV_DANGER) l = LV_DANGER;
+  if (prev &gt;= LV_WARNING &amp;&amp; ai &gt;= AI_WARNING * HYSTERESIS &amp;&amp; l &lt; LV_WARNING) l = LV_WARNING;
+  return l;
+}
+
+void startSampling(uint32_t now) {
+  peakAI = 0; liveLevel = LV_SAFE; heldLevel = LV_SAFE;
+  changeState(ST_SAMPLING, now);
+}
+
+void finishSampling(uint32_t now) {
+  Serial.print("# result peakAI=");
+  Serial.println(peakAI, 2);
+  if (heldLevel == LV_DANGER)       changeState(ST_RESULT_DANGER, now);
+  else if (heldLevel == LV_WARNING) changeState(ST_RESULT_WARNING, now);
+  else                              changeState(ST_RESULT_SAFE, now);
+}
+
+void logLine(uint32_t now, float pinMv, float rs, float ai) {
+  Serial.print(now);            Serial.print(',');
+  Serial.print(pinMv, 0);       Serial.print(',');
+  Serial.print(rs, 0);          Serial.print(',');
+  Serial.print(ai, 2);          Serial.print(',');
+  Serial.println(stateName(state));
+}
+
+void tick(uint32_t now) {
+  float pinMv = readPinMv();
+  float vs = sensorMv(pinMv);
+  float rs = calcRs(vs);
+  float ai = calcAI(r0, rs);
+  lastAI = ai;
+
+  // sensor fault: pin stuck at 0 or at the rail for FAULT_MS (ignored during warm-up)
+  if (state != ST_WARMUP &amp;&amp; state != ST_FAULT) {
+    bool bad = (pinMv &lt; FAULT_LOW_MV) || (pinMv &gt; FAULT_HIGH_MV);
+    if (bad) {
+      if (!badActive) { badActive = true; badSince = now; }
+      else if (now - badSince &gt;= FAULT_MS) { enterFault(1, now); badActive = false; return; }
+    } else {
+      badActive = false;
+    }
+  }
+
+  if (state == ST_SAMPLING || now - lastLog &gt;= LOG_PERIOD_MS) {
+    lastLog = now;
+    logLine(now, pinMv, rs, ai);
+  }
+
+  switch (state) {
+    case ST_WARMUP:
+      if (now - stateSince &gt;= WARMUP_MS) startCalibration(now);
+      break;
+
+    case ST_CALIBRATING: {
+      calSum += vs; calSumSq += (double)vs * vs; calN++;
+      if (now - stateSince &gt;= CAL_MS) {
+        double mean = calSum / calN;
+        double var = calSumSq / calN - mean * mean;
+        double sd = var &gt; 0 ? sqrt(var) : 0;
+        bool ok = (sd / mean &lt;= CAL_MAX_SPREAD) &amp;&amp; mean &gt;= CAL_MIN_MV &amp;&amp; mean &lt;= CAL_MAX_FRAC * VCC_SENSOR_MV;
+        if (ok) {
+          r0 = calcRs((float)mean);
+          float last = prefs.getFloat("r0", 0.0f);
+          Serial.print("# R0="); Serial.print(r0, 0);
+          if (last &gt; 0) { Serial.print(" (last boot "); Serial.print(last, 0); Serial.print(")"); }
+          Serial.println();
+          prefs.putFloat("r0", r0);
+          calTries = 0;
+          changeState(ST_READY, now);
+        } else {
+          calTries++;
+          Serial.println("# calibration rejected (unstable or out of range)");
+          if (calTries &gt;= CAL_TRIES) enterFault(2, now);
+          else startCalibration(now);
+        }
+      }
+      break; }
+
+    case ST_SAMPLING:
+      if (ai &gt; peakAI) peakAI = ai;
+      liveLevel = classify(ai, liveLevel);
+      if (liveLevel &gt; heldLevel) heldLevel = liveLevel;
+      if (now - stateSince &gt;= BREATH_WINDOW_MS) finishSampling(now);
+      break;
+
+    case ST_RESULT_SAFE:
+      if (now - stateSince &gt;= SAFE_UNLOCK_MS) changeState(ST_READY, now);          // re-lock
+      break;
+    case ST_RESULT_WARNING:
+      if (now - stateSince &gt;= COOLDOWN_WARNING_MS) changeState(ST_READY, now);
+      break;
+    case ST_RESULT_DANGER:
+      if (now - stateSince &gt;= COOLDOWN_DANGER_MS) changeState(ST_READY, now);
+      break;
+    default: break;                                                              // READY, FAULT
+  }
+}
+
+// short press in READY = start test, long press in READY = recalibrate
+void handleButton(uint32_t now) {
+  bool down = (digitalRead(PIN_BTN) == LOW);
+  if (down != btnPrev &amp;&amp; now - btnLastChange &gt;= DEBOUNCE_MS) {
+    btnLastChange = now;
+    btnPrev = down;
+    if (down) {
+      btnDownAt = now;
+    } else if (state == ST_READY) {
+      if (now - btnDownAt &gt;= LONGPRESS_MS) { calTries = 0; startCalibration(now); }
+      else startSampling(now);
+    }
+  }
+}
+
+void startWatchdog() {
+#if USE_WATCHDOG
+  #if ESP_ARDUINO_VERSION_MAJOR &gt;= 3
+    esp_task_wdt_config_t cfg = { 5000, 0, true };   // timeout_ms, idle_core_mask, trigger_panic
+    esp_task_wdt_reconfigure(&amp;cfg);
+  #else
+    esp_task_wdt_init(5, true);
+  #endif
+  esp_task_wdt_add(NULL);
+#endif
+}
+
+void setup() {
+  // relay first: boot must always be LOCKED
+  pinMode(PIN_RELAY, OUTPUT);
+  setRelay(false);
+  pinMode(PIN_LED_GREEN, OUTPUT);
+  pinMode(PIN_LED_RED, OUTPUT);
+  pinMode(PIN_BUZZER, OUTPUT);
+  pinMode(PIN_BTN, INPUT_PULLUP);
+
+  Serial.begin(115200);
+  Wire.begin(21, 22);
+  lcd.init();
+  lcd.backlight();
+  analogSetPinAttenuation(PIN_MQ3, ADC_11db);
+  prefs.begin("ps7", false);
+
+  Serial.println("# Alcohol Detection System - IAMC PS-7 (indicative index, not legal BAC)");
+  Serial.println("ms,raw_mV,rs_ohm,ai,state");
+  startWatchdog();
+  changeState(ST_WARMUP, millis());
+}
+
+void loop() {
+  esp_task_wdt_reset();
+  uint32_t now = millis();
+  handleButton(now);
+  if (now - lastTick &gt;= SAMPLE_PERIOD_MS) { lastTick = now; tick(now); }
+  updateIndicators(now);
+  if (now - lastLcd &gt;= 250) { lastLcd = now; drawLcd(now); }
+}
+</pre>
+<h3>5.2 config.h</h3>
+<pre>// config.h - all pins, thresholds and timings in one place (IAMC PS-7)
+#pragma once
+
+// 1 = Wokwi simulation (slide potentiometer on GPIO34, 3.3 V reference)
+// 0 = real hardware (MQ-3 module AO -&gt; 10k/15k divider -&gt; GPIO34, sensor on 5 V)
+#define SIMULATION 1
+
+// ---------- Pins (ESP32 DevKit V1) ----------
+#define PIN_MQ3        34   // ADC1_CH6, input only
+#define PIN_BTN        32   // start test / long-press = recalibrate (INPUT_PULLUP)
+#define PIN_LED_GREEN  26
+#define PIN_LED_RED    27
+#define PIN_BUZZER     25
+#define PIN_RELAY      33
+#define LCD_ADDR       0x27
+#define RELAY_ACTIVE_HIGH 1 // set 0 if your relay module is active-low
+
+// ---------- Electrical model ----------
+#if SIMULATION
+  #define VCC_SENSOR_MV  3300.0f   // pot is powered from 3V3
+  #define DIVIDER_GAIN   1.0f      // no divider in simulation
+  #define WARMUP_MS      10000UL   // shortened so the demo video stays short
+#else
+  #define VCC_SENSOR_MV  5000.0f   // MQ-3 module runs on 5 V
+  #define DIVIDER_GAIN   1.6667f   // (10k + 15k) / 15k : undo the divider
+  #define WARMUP_MS      60000UL   // minimum warm-up per TRD 2.4
+#endif
+#define RL_OHM           10000.0f  // module load resistor; only needed for absolute Rs in the log
+                                   // (it cancels out of the alcohol index AI = R0/Rs)
+
+// ---------- Calibration ----------
+#define CAL_MS           10000UL
+#define CAL_MAX_SPREAD   0.05f     // reject if std/mean of clean-air samples &gt; 5 %
+#define CAL_MIN_MV       50.0f
+#define CAL_MAX_FRAC     0.60f     // clean-air output must be below 60 % of Vcc
+#define CAL_TRIES        3
+
+// ---------- Sampling and decision ----------
+#define SAMPLE_PERIOD_MS 100UL     // 10 Hz
+#define BREATH_WINDOW_MS 5000UL
+#define AI_WARNING       2.0f      // starting values: TUNE with your own test log
+#define AI_DANGER        4.0f
+#define HYSTERESIS       0.8f      // leave a level only when AI &lt; 80 % of its entry threshold
+
+// ---------- Interlock timing ----------
+#define SAFE_UNLOCK_MS        60000UL
+#define COOLDOWN_WARNING_MS   30000UL
+#define COOLDOWN_DANGER_MS    60000UL
+
+// ---------- Fault detection (pin millivolts) ----------
+#define FAULT_LOW_MV     10.0f
+#define FAULT_HIGH_MV    3150.0f   // ESP32 ADC saturates near here at 11 dB attenuation
+#define FAULT_MS         1000UL
+
+// ---------- Misc ----------
+#define DEBOUNCE_MS      30UL
+#define LONGPRESS_MS     3000UL
+#define LOG_PERIOD_MS    500UL     // idle log rate (every tick while SAMPLING)
+#define USE_WATCHDOG     1
+</pre>
+<h3>5.3 sensor.h</h3>
+<pre>// sensor.h - ADC read and MQ-3 maths
+#pragma once
+#include &lt;Arduino.h&gt;
+#include "config.h"
+
+// Average 16 ADC readings; returns millivolts at the ESP32 pin.
+inline float readPinMv() {
+  uint32_t sum = 0;
+  for (int i = 0; i &lt; 16; i++) sum += analogReadMilliVolts(PIN_MQ3);
+  return sum / 16.0f;
+}
+
+// Undo the resistor divider to get the sensor module's output voltage.
+inline float sensorMv(float pinMv) { return pinMv * DIVIDER_GAIN; }
+
+// Sensor resistance from the module output voltage: Rs = RL * (Vcc - Vs) / Vs
+// Vs is clamped away from 0 and Vcc so we never divide by zero.
+inline float calcRs(float vsMv) {
+  if (vsMv &lt; 20.0f) vsMv = 20.0f;
+  if (vsMv &gt; VCC_SENSOR_MV - 20.0f) vsMv = VCC_SENSOR_MV - 20.0f;
+  return RL_OHM * (VCC_SENSOR_MV - vsMv) / vsMv;
+}
+
+// Alcohol index AI = R0 / Rs. About 1.0 in clean air, rises with alcohol (Rs falls).
+inline float calcAI(float r0, float rs) { return (r0 &gt; 0.0f &amp;&amp; rs &gt; 0.0f) ? r0 / rs : 0.0f; }
+</pre>
+
+<h2>Appendix A. Verification Summary and Limitations</h2>
+<p><b>Verified on 22 November 2026 (before this PDF was built):</b></p>
+<ul>
+<li><b>Host unit tests:</b> the firmware was compiled with g++ (C++17) against mock Arduino headers and the scripted tests passed with 0 failures, covering boot lock, warm-up, calibration, SAFE, WARNING, DANGER, cooldowns, hysteresis, recalibration and FAULT (tests/ in the repository).</li>
+<li><b>Wokwi simulation:</b> the project was loaded fresh, anonymously, at wokwi.com and run end to end. All states were reached with measured Serial evidence: WARMUP &rarr; CALIBRATING &rarr; READY &rarr; SAMPLING &rarr; SAFE (peak AI 1.00), WARNING (peak AI 2.19), DANGER (peak AI 4.20) and FAULT E1. No compile errors, no wiring warnings, no unexpected states. Screenshots in §4 are genuine captures of those runs.</li>
+<li><b>Fail-safe relay:</b> the relay released only in SAFE (blue Engine LED on, LCD "Engine ON") and stayed locked in WARNING, DANGER, FAULT and READY.</li>
+</ul>
+<p><b>Not verified / honest limitations:</b></p>
+<ul>
+<li><b>Thresholds are untuned.</b> AI_WARNING 2.0 and AI_DANGER 4.0 are starting values. The trial log data/test_log.csv is empty (header only, zero trials), so no accuracy, false-alarm or repeatability numbers exist. The three bands were confirmed in simulation only.</li>
+<li><b>No real-hardware run.</b> The firmware has not been run on a physical ESP32 or with a real MQ-3. Real-sensor behaviour (burn-in ~24 h, heater warm-up 60 s, response to hand sanitiser or an ethanol swab, temperature/humidity drift) is untested. Nobody should drink for a test.</li>
+<li><b>Buzzer sound not verified by ear.</b> The code drives the buzzer in every result state and the buzzer is wired in the simulation, but no audio was captured from the browser session, so the tone itself is unverified.</li>
+<li><b>README demo values corrected.</b> The slider percentages and the ~300 mV clean-air figure in the draft README were wrong for Wokwi's potentiometer (see the note in §4.3); the measured values in this PDF replace them.</li>
+<li><b>Gerber (point 7) and demo video (point 6)</b> are delivered alongside this PDF in the same repository; the Gerber set is a hand-built layout produced from the net list in hardware/PCB_GUIDE.md and has not been DRC-checked in KiCad or fabricated.</li>
+</ul>
+<p class="small">Sources: the project zip as received (sketch.ino, config.h, sensor.h, diagram.json, libraries.txt, README.md, analyze_log.py, data/test_log.csv, hardware/PCB_GUIDE.md, tests/), Wokwi simulation runs on 22 Nov 2026, and host test run "ALL TESTS PASSED (0 failures)". No claim in this document goes beyond what those sources support.</p>
+
+</body></html>
