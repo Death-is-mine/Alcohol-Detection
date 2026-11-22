@@ -5,7 +5,8 @@ fail-safe relay. Built for the IAMC evaluation; simulation-verified in
 Wokwi. **Not yet tested on real hardware.**
 
 
-![Demo video](https://github.com/user-attachments/assets/b64c7515-185b-489f-a044-7a369ffbc8ef)
+<video src="https://github.com/user-attachments/assets/b64c7515-185b-489f-a044-7a369ffbc8ef" controls></video>
+
 Demo video (108 s) — press play to watch the system run through SAFE, WARNING, DANGER and FAULT.
 
 
