@@ -13,7 +13,7 @@ Demo video (108 s) — press play to watch the system run through SAFE, WARNING,
 
 - **Live simulation:** https://wokwi.com/projects/481328204846969857
 - **Full report (points 1–5):** [`docs/IAMC-PS7-Alcohol-Detection-System.pdf`](docs/IAMC-PS7-Alcohol-Detection-System.pdf)
-- **Demo video (90 s):** [`video/IAMC-PS7-Alcohol-Detection-Demo.mp4`](video/IAMC-PS7-Alcohol-Detection-Demo.mp4)
+- **Demo video (108 s):** [`video/IAMC-PS7-Alcohol-Detection-Demo.mp4`](video/IAMC-PS7-Alcohol-Detection-Demo.mp4)
 
 ## How it works
 
